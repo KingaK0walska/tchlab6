@@ -1,35 +1,52 @@
-# ETAP 1
-FROM scratch AS builder
+# syntax=docker/dockerfile:1
 
-# Dodajemy system plików Alpine Linux do etapu budowania
+#  Pobranie repozytorium przez protokół SSH
+
+FROM alpine AS cloner
+
+RUN apk add --no-cache git openssh-client
+
+# github jako znany host, aby uniknąć problemów z autentykacją
+RUN mkdir -p -m 0700 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+RUN --mount=type=ssh git clone git@github.com:KingaK0walska/tchlab6.git /pobrane_repo
+
+# ETAP 1: Budowanie aplikacji 
+FROM scratch AS builder
 ADD alpine-minirootfs-3.23.3-x86_64.tar /
 
-# Deklaracja zmiennej ARG
 ARG VERSION="1.0.0"
 
-# Skrypt startowy dla Nginxa
+RUN cat <<EOF > /app.sh
+#!/bin/sh
+mkdir -p /usr/share/nginx/html
+cat <<HTML > /usr/share/nginx/html/index.html
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Zadanie Lab 6</title></head>
+<body>
+    <h1>Aplikacja Webowa - Lab 6 (BuildKit & SSH)</h1>
+    <p><strong>Wersja aplikacji:</strong> ${VERSION}</p>
+    <p><strong>Adres IP:</strong> \$(hostname -i)</p>
+    <p><strong>Hostname:</strong> \$(hostname)</p>
+</body>
+</html>
+HTML
+exec nginx -g "daemon off;"
+EOF
 
-RUN echo '#!/bin/sh' > /app.sh && \
-    echo 'echo "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>Zadanie Lab 5</title></head><body>" > /usr/share/nginx/html/index.html' >> /app.sh && \
-    echo 'echo "<h1>Aplikacja Webowa - Lab 5</h1>" >> /usr/share/nginx/html/index.html' >> /app.sh && \
-    echo 'echo "<p><strong>Wersja aplikacji:</strong> '${VERSION}'</p>" >> /usr/share/nginx/html/index.html' >> /app.sh && \
-    echo 'echo "<p><strong>Adres IP serwera:</strong> $(hostname -i)</p>" >> /usr/share/nginx/html/index.html' >> /app.sh && \
-    echo 'echo "<p><strong>Nazwa serwera (hostname):</strong> $(hostname)</p>" >> /usr/share/nginx/html/index.html' >> /app.sh && \
-    echo 'echo "</body></html>" >> /usr/share/nginx/html/index.html' >> /app.sh && \
-    echo 'exec nginx -g "daemon off;"' >> /app.sh && \
-    chmod +x /app.sh
+RUN chmod +x /app.sh
 
+# Kopia pliku README.md z pobranego repozytorium!
+COPY --from=cloner /pobrane_repo/README.md /usr/share/nginx/html/README.md
 
-# ETAP 2 
-# Obraz bazowy Nginx 
+# Serwer docelowy 
 FROM nginx:alpine
-
-# Kopiowanie skryptu startowego z etapu 1
 COPY --from=builder /app.sh /app.sh
+# Kopiujemy plik README na serwer docelowy, aby dało się go wyświetlić w przeglądarce
+COPY --from=builder /usr/share/nginx/html/README.md /usr/share/nginx/html/README.md
 
-# Sprawdzanie poprawności działania 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://localhost/ || exit 1
 
-# Skrypt - domyślne polecenie uruchamiane przy starcie kontenera
 CMD ["/app.sh"]
